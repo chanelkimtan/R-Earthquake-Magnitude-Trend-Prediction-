@@ -1,0 +1,244 @@
+Data Pre-Processing
+Downloading and Loading R libraries and packages
+install.packages(c(
+  "tidyverse",
+  "dplyr",
+  "janitor",
+  "stringr",
+  "data.table",
+  "lubridate",
+  "sf",
+  "rnaturalearth",
+  "rnaturalearthdata",
+  "ggplot2",
+  "GGally",
+  "corrplot",
+  "viridis",
+  "caret",
+  "xgboost",
+  "Metrics",
+  "broom"
+))
+
+library(tidyverse)
+library(dplyr)
+library(janitor)
+library(stringr)
+library(data.table)
+library(lubridate)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(viridis)
+library(caret)
+library(xgboost)
+library(Metrics)
+library(broom)
+
+Loading the dataset 
+setwd("Desktop")
+data_path <- "phivolcs_earthquake_data.csv"
+raw <- read_csv(data_path, guess_max = 10000)
+glimpse(raw)
+head(raw)
+
+Renaming and Pre-processing
+Renaming
+eq <- raw %>% 
+clean_names() %>%
+rename(date_time = date_time_ph, depth_km = depth_in_km, region = general_location)
+#Other variables are no longer renamed since it is already ideal 
+
+Changes the formatting of the date and time for analysis 
+if("datetime" %in% names(eq)){
+eq <- eq %>%
+mutate(datetime = parse_date_time(datetime, orders = c("Ymd HMS","Y-m-d H:M:S","d/m/Y H:M","Y/m/d H:M:S","Y-m-d"), tz = "Asia/Manila"))}
+
+Adds new columns to show year, month, day, and hour from the date_time column.
+if ("date_time" %in% names(eq)) {
+eq <- eq %>%
+mutate(
+year = lubridate::year(date_time),
+month = lubridate::month(date_time, label = TRUE, abbr = TRUE),
+day = lubridate::day(date_time),
+hour = lubridate::hour(date_time))
+
+Adds the island groups based on latitude information, region, etc.
+eq <- eq %>%
+mutate(island_group = case_when(region %in% c("Region I", "Region II", "Region III", "NCR", "CAR", "Region IV-A", "MIMAROPA", "Region V") ~ "Luzon",
+region %in% c("Region VI", "Region VII", "Region VIII") ~ "Visayas",
+region %in% c("Region IX", "Region X", "Region XI", "Region XII",
+"Region XIII", "BARMM") ~ "Mindanao",
+TRUE ~ NA_character_))
+
+eq <- eq %>%
+mutate(
+island_group = case_when(
+latitude >= 12 ~ "Luzon",
+latitude >= 9 & latitude < 12 ~ "Visayas",
+latitude < 9 ~ "Mindanao",
+TRUE ~ NA_character_))
+
+Replaces NA with Unknown and cleans up inconsistent text spaces 
+eq <- eq %>%
+mutate(region = ifelse(is.na(region) | region == "", "Unknown", str_squish(region)))
+
+Removes duplicates from dataset
+eq <- eq %>% distinct()
+
+Removes rows with essential fields missing
+eq <- eq %>% filter(!is.na(latitude) & !is.na(longitude) & !is.na(depth_km) & !is.na(magnitude))
+
+Filters rows with very small magnitudes
+eq <- eq %>% filter(magnitude >= 2.0)
+
+Preview to see the cleaned version
+glimpse(eq)
+head(eq)
+
+Conducting Exploratory Data Analysis in R 
+Setting File Path
+setwd("Desktop")
+data_path <- "phivolcs_earthquake_data.csv"
+raw <- read_csv(data_path, guess_max = 10000)
+glimpse(raw)
+head(raw)
+
+Performing Exploratory Data Analysis (Plots, Graphs, etc.)
+Magnitude Distribution
+ggplot(eq, aes(x = magnitude)) + 
+geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+labs(title = "Magnitude distribution", x = "Magnitude", y = "Count") 
+
+Depth vs. Magnitude Distribution
+ggplot(eq, aes(x = depth_km, y = magnitude)) +
+geom_point(alpha = 0.4, color = "skyblue", size = 2) +
+geom_smooth(method = "loess", color = "#d62728", se = TRUE, linewidth = 1.2) +
+labs(title = "Depth vs Magnitude of Earthquakes",
+    x = "Depth (km)",
+    y = "Magnitude") +
+theme_minimal(base_size = 14) +
+theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank())
+
+Earthquake Counts per year
+eq %>%
+count(year) %>%
+ggplot(aes(x = year, y = n)) +
+geom_line(color = "skyblue", size = 1.2) +        
+geom_point(color = "skyblue", size = 2) +           
+labs(
+    title = "Earthquake Counts by Year",
+    x = "Year",
+    y = "Count") +
+theme_minimal(base_size = 13) +                     
+theme(plot.title = element_text(face = "bold", hjust = 0.5),
+    panel.grid.minor = element_blank())
+
+Average Earthquake Magnitudes per Island Group (Luzon, Visayas, Mindanao)
+eq_summary <- eq %>%
+group_by(island_group) %>%
+summarise(mean_mag = mean(magnitude, na.rm = TRUE))
+
+ggplot(eq_summary, aes(x = island_group, y = mean_mag)) +
+geom_col(fill = "skyblue", color = "gray30") +
+labs(
+    title = "Average Earthquake Magnitude by Island Group",
+    x = "Island Group",
+    y = "Mean Magnitude") +
+theme_minimal(base_size = 13) +
+theme(plot.title = element_text(face = "bold", hjust = 0.5))
+
+Visual Correlation Matrix
+num_vars <- eq %>% select(where(is.numeric))
+cor_mat <- cor(na.omit(num_vars))
+corrplot(cor_mat, method = "number")
+
+Map Plot of Earthquakes in the Philippines
+world <- ne_countries(scale = "medium", returnclass = "sf")
+map_plot <- ggplot() +
+geom_sf(data = world, fill = "gray95") +
+geom_point(data = eq, aes(x = longitude, y = latitude, size = magnitude, color = depth_km), alpha = 0.6) +
+scale_size_continuous(range = c(0.5, 4)) +
+coord_sf(xlim = c(115, 130), ylim = c(5, 22)) +
+labs(title = "Earthquakes in the Philippines (map)")
+print(map_plot)
+
+Predicting Earthquake Magnitude in R 
+Test splitting 
+Splitting test sets
+set.seed(123)
+split <- sample(1:nrow(eq), 0.7 * nrow(eq))
+train_data <- eq[split, ]
+test_data  <- eq[-split, ]
+
+nrow(train_data) 
+nrow(test_data)
+
+Re-verifying variable names and rechecking 
+names(eq) 
+str(eq)
+
+Removing NAs to prevent errors in splitting
+eq <- eq %>% drop_na(magnitude, depth_km, latitude, longitude)
+
+Re-split to verify the initial train and test data
+set.seed(123)
+split <- sample(1:nrow(eq), 0.7 * nrow(eq))
+train_data <- eq[split, ]
+test_data  <- eq[-split, ]
+
+nrow(train_data) 
+nrow(test_data)
+
+Run the script to get the final split data 
+nrow(eq) 
+nrow(train_data)
+nrow(test_data) 
+
+Model Building and Evaluation
+Linear Regression Model on the training data  
+lm_model <- lm(magnitude ~ latitude + longitude + depth_km + year + month, data = train_data)
+summary(lm_model)
+
+Comparing Actual vs. Predicted (Training)
+lm_pred <- predict(lm_model, newdata = train_data)
+
+results <- data.frame(
+actual = train_data$magnitude,
+predicted = lm_pred)
+
+head(results)
+
+Evaluating Model Performance 
+r2 <- cor(results$actual, results$predicted)^2
+rmse <- rmse(results$actual, results$predicted)
+mae  <- mae(results$actual, results$predicted)
+
+cat("R-squared:", round(r2, 3), "\n")
+cat("RMSE:", round(rmse, 3), "\n")
+cat("MAE:", round(mae, 3), "\n")
+
+Plot of Predicted vs Actual Magnitudes 
+ggplot(results, aes(x = actual, y = predicted)) +
+geom_point(alpha = 0.4, color = "skyblue") +
+geom_smooth(method = "lm", color = "darkblue", se = FALSE) +
+labs(title = "Predicted vs Actual Earthquake Magnitude", x = "Actual Magnitude", y = "Predicted Magnitude") + theme_minimal()
+
+Variable Linear Regression - To check which variables are more influential 
+coef_summary <- tidy(lm_model) %>%
+arrange(desc(abs(estimate)))
+print(coef_summary)
+
+Comparing Actual vs. Predicted (Testing)
+lm_pred <- predict(lm_model, newdata = test_data)
+results <- data.frame(
+actual = test_data$magnitude,
+predicted = lm_pred)
+
+head(results)
